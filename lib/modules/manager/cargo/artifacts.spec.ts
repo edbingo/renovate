@@ -1072,6 +1072,68 @@ describe('modules/manager/cargo/artifacts', () => {
     ]);
   });
 
+  it('handles version selection error by running full update when all dependencies are filtered (with constraints config)', async () => {
+    fs.statLocalFile.mockResolvedValueOnce({ name: 'Cargo.lock' } as any);
+    fs.findLocalSiblingOrParent.mockResolvedValueOnce('Cargo.lock');
+    fs.readLocalFile.mockResolvedValueOnce('Old Cargo.lock');
+
+    const packageDep1Cmd =
+      'cargo update --config net.git-fetch-with-cli=true' +
+      ' --manifest-path Cargo.toml' +
+      ' --package dep1@1.0.0 --precise 1.0.1';
+
+    const fullUpdateCmd =
+      'cargo update --config net.git-fetch-with-cli=true' +
+      ' --manifest-path Cargo.toml --workspace';
+
+    const execSnapshots = mockExecSequence([
+      new ExecError('Version selection failed', {
+        cmd: packageDep1Cmd,
+        stdout: '',
+        stderr:
+          'error: failed to select a version for the requirement `dep1 = "^1.0"`',
+        options: { encoding: 'utf8' },
+      }),
+      { stdout: '', stderr: '' },
+    ]);
+
+    fs.readLocalFile.mockResolvedValueOnce('Old Cargo.lock'); // For error handling
+    fs.readLocalFile.mockResolvedValueOnce('Final Cargo.lock'); // After full update
+
+    const updatedDeps = [
+      {
+        depName: 'dep1',
+        packageName: 'dep1',
+        lockedVersion: '1.0.0',
+        newVersion: '1.0.1',
+        datasource: CrateDatasource.id,
+      },
+    ];
+
+    expect(
+      await cargo.updateArtifacts({
+        packageFileName: 'Cargo.toml',
+        updatedDeps,
+        newPackageFileContent: '{}',
+        config: { ...config, constraints: { rust: '1.65.0' } },
+      }),
+    ).toEqual([
+      {
+        file: {
+          contents: 'Final Cargo.lock',
+          path: 'Cargo.lock',
+          type: 'addition',
+        },
+      },
+    ]);
+
+    expect(execSnapshots).toHaveLength(2);
+    expect(execSnapshots).toMatchObject([
+      { cmd: packageDep1Cmd },
+      { cmd: fullUpdateCmd },
+    ]);
+  });
+
   it('handles version selection error by filtering out lockfileUpdate dependencies', async () => {
     fs.statLocalFile.mockResolvedValueOnce({ name: 'Cargo.lock' } as any);
     fs.findLocalSiblingOrParent.mockResolvedValueOnce('Cargo.lock');
